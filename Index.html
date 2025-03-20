@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Interactive Cyclic Quadrilateral</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>3D Cyclic Quadrilateral</h3>
+        <p>Drag the yellow points to reshape the quadrilateral while keeping them on the circle.</p>
+        <p id="quad-info"></p>
+    </div>
+    <script>
+        // Create Scene
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Controls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // Circle (Circumcircle)
+        const radius = 10;
+        const circleGeometry = new THREE.CircleGeometry(radius, 100);
+        const circleMaterial = new THREE.MeshBasicMaterial({ color: 0x3399ff, wireframe: true });
+        const circle = new THREE.Mesh(circleGeometry, circleMaterial);
+        circle.rotation.x = -Math.PI / 2; // Align with XY plane
+        scene.add(circle);
+
+        // Quadrilateral Points (On the Circle)
+        function polarToCartesian(radius, angle) {
+            return new THREE.Vector3(radius * Math.cos(angle), radius * Math.sin(angle), 0);
+        }
+
+        const angles = [Math.PI / 3, 0, -Math.PI / 4, -2 * Math.PI / 3]; // A, B, C, D
+        const points = angles.map(angle => polarToCartesian(radius, angle));
+
+        // Draw edges of the quadrilateral
+        const lineMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+        let edges = [];
+
+        function drawEdges() {
+            edges.forEach(edge => scene.remove(edge));
+            edges = [];
+            for (let i = 0; i < points.length; i++) {
+                let next = (i + 1) % points.length;
+                const geometry = new THREE.BufferGeometry().setFromPoints([points[i], points[next]]);
+                const line = new THREE.Line(geometry, lineMaterial);
+                scene.add(line);
+                edges.push(line);
+            }
+        }
+
+        drawEdges();
+
+        // Add point markers (spheres)
+        const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        let markers = [];
+
+        function createMarker(position) {
+            const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+            const marker = new THREE.Mesh(geometry, pointMaterial);
+            marker.position.copy(position);
+            scene.add(marker);
+            markers.push(marker);
+        }
+
+        points.forEach(createMarker);
+
+        // Raycaster for detecting mouse clicks
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let draggingPoint = null;
+
+        // Add a helper plane for raycasting
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // XY Plane
+
+        function onMouseDown(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(markers);
+
+            if (intersects.length > 0) {
+                draggingPoint = intersects[0].object;
+            }
+        }
+
+        function onMouseMove(event) {
+            if (!draggingPoint) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            let intersection = new THREE.Vector3();
+            raycaster.ray.intersectPlane(plane, intersection);
+
+            if (intersection) {
+                let angle = Math.atan2(intersection.y, intersection.x);
+                let constrainedPos = new THREE.Vector3(radius * Math.cos(angle), radius * Math.sin(angle), 0);
+
+                draggingPoint.position.copy(constrainedPos);
+
+                let index = markers.indexOf(draggingPoint);
+                if (index !== -1) {
+                    points[index].copy(constrainedPos);
+                }
+
+                drawEdges();
+                updateInfo();
+            }
+        }
+
+        function onMouseUp() {
+            draggingPoint = null;
+        }
+
+        window.addEventListener("mousedown", onMouseDown);
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+
+        // Calculate and display area
+        function calculateQuadrilateralArea() {
+            function crossProduct(p1, p2, p3) {
+                return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
+            }
+            let A = points[0], B = points[1], C = points[2], D = points[3];
+            return 0.5 * Math.abs(crossProduct(A, B, C) + crossProduct(A, C, D));
+        }
+
+        function calculateCircumradius(area) {
+            let a = points[0].distanceTo(points[1]);
+            let b = points[1].distanceTo(points[2]);
+            let c = points[2].distanceTo(points[3]);
+            let d = points[3].distanceTo(points[0]);
+            return (a * b * c * d) / (4 * area);
+        }
+
+        function updateInfo() {
+            let area = calculateQuadrilateralArea();
+            let R = calculateCircumradius(area);
+            document.getElementById("quad-info").innerHTML = `Quadrilateral Area: ${area.toFixed(2)}<br>Circumcircle Radius: ${R.toFixed(2)}`;
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Resize handling
+        window.addEventListener("resize", () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        updateInfo();
+    </script>
+</body>
+</html>
